@@ -1,0 +1,195 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// DID (Decentralized Identifier)
+model DID {
+  id            String    @id @default(uuid())
+  did           String    @unique // The actual DID string (did:p3ai:...)
+  controller    String // Controller's DID
+  document      Json // The DID document as JSON
+  documentHash  String // Hash of the DID document
+  signature     String? // Signature of the document hash
+  privateKey    String? // Encrypted private key (only for DIDs controlled by this node)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deactivatedAt DateTime?
+
+  // Relationships
+  issuedVCs     VerifiableCredential[] @relation("issuer")
+  subjectVCs    VerifiableCredential[] @relation("subject")
+  agents        Agent[]
+  issuedTasks   Task[]                 @relation("taskIssuer")
+  assignedTasks Task[]                 @relation("taskAssignee")
+  messages      Message[]
+
+  @@index([did])
+  @@index([controller])
+}
+
+// Verifiable Credential
+model VerifiableCredential {
+  id             String    @id @default(uuid())
+  vcId           String    @unique // Unique identifier for the credential
+  issuerId       String // DID of issuer
+  subjectId      String // DID of subject
+  type           String[] // Types of the credential
+  issuer         DID       @relation("issuer", fields: [issuerId], references: [did])
+  subject        DID       @relation("subject", fields: [subjectId], references: [did])
+  claims         Json // The credential claims
+  credentialHash String // Hash of the credential
+  proof          Json // The proof (signature, etc.)
+  issuanceDate   DateTime
+  expirationDate DateTime?
+  revoked        Boolean   @default(false)
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([issuerId])
+  @@index([subjectId])
+  @@index([type])
+}
+
+// Agent
+model Agent {
+  id           String   @id @default(uuid())
+  agentId      String   @unique
+  didId        String   @unique // Added @unique here
+  did          DID      @relation(fields: [didId], references: [did])
+  name         String
+  description  String?
+  keywords     String[] // Keywords for discovery
+  capabilities Json // JSON describing agent capabilities
+  status       String // Status of the agent (active, inactive, etc.)
+  metadata     Json? // Additional metadata
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relationships
+  issuedTasks   Task[] @relation("taskIssuer")
+  assignedTasks Task[] @relation("taskAssignee")
+
+  @@index([didId])
+  @@index([keywords])
+  @@index([status])
+}
+
+// Task
+model Task {
+  id            String    @id @default(uuid())
+  taskId        String    @unique // Unique identifier for the task
+  issuerId      String // DID of the task issuer
+  assigneeId    String? // DID of the task assignee
+  issuer        DID       @relation("taskIssuer", fields: [issuerId], references: [did], map: "Task_issuer_did_fkey")
+  assignee      DID?      @relation("taskAssignee", fields: [assigneeId], references: [did], map: "Task_assignee_did_fkey")
+  agentIssuer   Agent     @relation("taskIssuer", fields: [issuerId], references: [didId], map: "Task_issuer_agent_fkey")
+  agentAssignee Agent?    @relation("taskAssignee", fields: [assigneeId], references: [didId], map: "Task_assignee_agent_fkey")
+  type          String
+  status        String // Status of the task (pending, in-progress, completed, failed)
+  title         String
+  description   String?
+  input         Json? // Input data for the task
+  output        Json? // Output data from the task
+  ttl           Int? // Time-to-live in seconds
+  hopCount      Int       @default(0) // Number of hops/transfers
+  priority      Int       @default(1) // Priority level (1-5)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  startedAt     DateTime?
+  completedAt   DateTime?
+
+  // Task state tracking
+  stateCheckpoints TaskStateCheckpoint[]
+
+  @@index([issuerId])
+  @@index([assigneeId])
+  @@index([status])
+  @@index([type])
+}
+
+// Task State Checkpoint
+model TaskStateCheckpoint {
+  id        String   @id @default(uuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  state     Json // The state of the task at this checkpoint
+  stateHash String // Hash of the state
+  sequence  Int // Sequence number for ordering
+  createdAt DateTime @default(now())
+
+  @@index([taskId])
+  @@index([stateHash])
+}
+
+// Message for agent communication
+model Message {
+  id             String    @id @default(uuid())
+  messageId      String    @unique // Unique identifier for the message
+  senderId       String // DID of the sender
+  sender         DID       @relation(fields: [senderId], references: [did])
+  receiverId     String? // DID of the receiver (null for broadcast)
+  conversationId String? // Identifier for grouping related messages
+  intent         String // Purpose of the message (e.g., task-request, response)
+  type           String // Message type (e.g., text, json)
+  payload        Json // Message content
+  signature      String? // Message signature
+  encrypted      Boolean   @default(false)
+  read           Boolean   @default(false)
+  sentAt         DateTime  @default(now())
+  deliveredAt    DateTime?
+  readAt         DateTime?
+
+  @@index([senderId])
+  @@index([receiverId])
+  @@index([conversationId])
+  @@index([intent])
+}
+
+// Key-value storage (for app configuration, etc.)
+model KeyValueStore {
+  id        String    @id
+  value     String
+  ttl       DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([ttl])
+}
+
+// Encryption Keys
+model EncryptionKey {
+  id        String    @id @default(uuid())
+  key       String // Encrypted key
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  expiresAt DateTime?
+
+  @@index([active])
+}
+
+// Audit Log
+model AuditLog {
+  id         String   @id @default(uuid())
+  action     String
+  entityType String
+  entityId   String
+  userId     String?
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+}

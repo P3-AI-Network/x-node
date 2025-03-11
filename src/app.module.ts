@@ -7,6 +7,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import configuration from './config/configuration';
 import { validateConfig } from './config/validation.schema';
+import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
   imports: [
@@ -26,6 +27,8 @@ import { validateConfig } from './config/validation.schema';
     }),
 
     ScheduleModule.forRoot(),
+
+    PrismaModule,
   ],
   controllers: [AppController],
   providers: [AppService],
